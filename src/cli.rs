@@ -22,6 +22,9 @@ pub enum Commands {
         /// Show discovered values without saving to current.yaml
         #[arg(long, short = 'n')]
         dry_run: bool,
+        /// Output discovered values as JSON (implies --dry-run)
+        #[arg(long)]
+        json: bool,
     },
 
     /// Add or update a variable in current.yaml

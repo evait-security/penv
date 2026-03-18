@@ -20,7 +20,7 @@ fn main() {
 fn run(cli: Cli) -> anyhow::Result<()> {
     match cli.command {
         Commands::Init => cmd_init(),
-        Commands::Discover { dry_run } => cmd_discover(dry_run),
+        Commands::Discover { dry_run, json } => cmd_discover(dry_run, json),
         Commands::Set { key, value } => cmd_set(&key, &value),
         Commands::Unset { key } => cmd_unset(&key),
         Commands::List => cmd_list(),
@@ -80,38 +80,62 @@ fn shell_single_quote(value: &str) -> String {
 // penv discover
 // ---------------------------------------------------------------------------
 
-fn cmd_discover(dry_run: bool) -> anyhow::Result<()> {
+fn cmd_discover(dry_run: bool, json: bool) -> anyhow::Result<()> {
     let path = Config::current_path()?;
     let mut cfg = Config::load(&path)?;
 
     let info = network::discover();
 
+    // Build a map of discovered values
+    let mut discovered = std::collections::BTreeMap::new();
+
     if let Some(ip) = info.ip {
-        println!("ip       = {ip}");
-        cfg.vars.insert("ip".to_string(), ip);
+        discovered.insert("ip".to_string(), ip);
+    }
+    if let Some(gw) = info.gateway {
+        discovered.insert("gateway".to_string(), gw);
+    }
+    if let Some(dns) = info.dns {
+        discovered.insert("dc".to_string(), dns);
+    }
+    if let Some(domain) = info.domain {
+        discovered.insert("domain".to_string(), domain);
+    }
+
+    if json {
+        // JSON output (implies dry-run)
+        println!("{}", serde_json::to_string(&discovered)?);
+        return Ok(());
+    }
+
+    // Normal text output
+    if discovered.contains_key("ip") {
+        println!("ip       = {}", discovered["ip"]);
     } else {
         eprintln!("penv: could not determine local IP address");
     }
 
-    if let Some(gw) = info.gateway {
-        println!("gateway  = {gw}");
-        cfg.vars.insert("gateway".to_string(), gw);
+    if discovered.contains_key("gateway") {
+        println!("gateway  = {}", discovered["gateway"]);
     } else {
         eprintln!("penv: could not determine default gateway");
     }
 
-    if let Some(dns) = info.dns {
-        println!("dc       = {dns}");
-        cfg.vars.insert("dc".to_string(), dns);
+    if discovered.contains_key("dc") {
+        println!("dc       = {}", discovered["dc"]);
     } else {
         eprintln!("penv: could not determine DNS/DC server");
     }
 
-    if let Some(domain) = info.domain {
-        println!("domain   = {domain}");
-        cfg.vars.insert("domain".to_string(), domain);
+    if discovered.contains_key("domain") {
+        println!("domain   = {}", discovered["domain"]);
     } else {
         eprintln!("penv: could not determine domain name");
+    }
+
+    // Insert into config for saving
+    for (k, v) in &discovered {
+        cfg.vars.insert(k.clone(), v.clone());
     }
 
     if dry_run {
