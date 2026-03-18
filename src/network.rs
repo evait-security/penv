@@ -1,7 +1,7 @@
 use std::{
     fs,
-    net::IpAddr,
     path::Path,
+    process::Command,
 };
 
 /// Results of an automatic network environment discovery.
@@ -14,140 +14,264 @@ pub struct NetworkInfo {
 }
 
 /// Discover the primary LAN interface IP, default gateway, DNS server, and
-/// DNS search domain using standard Linux mechanisms.
+/// DNS search domain using standard Linux tools.
 pub fn discover() -> NetworkInfo {
+    let (iface, gateway) = discover_default_route();
+    let ip = iface.as_ref().and_then(|i| discover_iface_ip(i));
+    let (dns, domain) = discover_dns_info(iface.as_deref());
+
     NetworkInfo {
-        ip: discover_local_ip(),
-        gateway: discover_gateway(),
-        dns: discover_dns(),
-        domain: discover_domain(),
+        ip,
+        gateway,
+        dns,
+        domain,
     }
 }
 
 // ---------------------------------------------------------------------------
-// IP address of the primary LAN adapter
+// Default route and gateway via `ip route`
 // ---------------------------------------------------------------------------
 
-/// Parse `/proc/net/fib_trie` to find the IP address bound to the primary LAN
-/// adapter.  The default-route interface is used to skip docker/loopback
-/// addresses when multiple interfaces are present.
-fn discover_local_ip() -> Option<String> {
-    let candidates = fib_trie_local_ips();
+/// Parse `ip route` output to find default route interface and gateway.
+/// Returns (interface_name, gateway_ip).
+fn discover_default_route() -> (Option<String>, Option<String>) {
+    let output = Command::new("ip")
+        .args(["route", "show", "default"])
+        .output()
+        .ok();
 
-    // Skip well-known non-LAN prefixes and prefer the address on the
-    // default-route interface (identified by its entry in /proc/net/route).
-    let _iface = default_route_iface();
+    let stdout = match output {
+        Some(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
+        _ => return (None, None),
+    };
 
-    candidates
-        .into_iter()
-        .find(|ip| !ip.starts_with("127.") && !ip.starts_with("172.17."))
-}
+    // Format: "default via 192.168.3.1 dev enp5s0 proto dhcp src 192.168.3.32 metric 100"
+    let mut gateway = None;
+    let mut iface = None;
 
-/// Return the name of the network interface that carries the default route
-/// by parsing `/proc/net/route`.
-fn default_route_iface() -> Option<String> {
-    let content = fs::read_to_string("/proc/net/route").ok()?;
-    for line in content.lines().skip(1) {
-        let cols: Vec<&str> = line.split_whitespace().collect();
-        if cols.len() < 3 {
+    for line in stdout.lines() {
+        if !line.starts_with("default") {
             continue;
         }
-        // Destination == "00000000" means default route
-        if cols[1] == "00000000" {
-            return Some(cols[0].to_string());
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        for (i, part) in parts.iter().enumerate() {
+            if *part == "via" && i + 1 < parts.len() {
+                gateway = Some(parts[i + 1].to_string());
+            }
+            if *part == "dev" && i + 1 < parts.len() {
+                iface = Some(parts[i + 1].to_string());
+            }
+        }
+        // Use first default route
+        if gateway.is_some() || iface.is_some() {
+            break;
         }
     }
+
+    (iface, gateway)
+}
+
+// ---------------------------------------------------------------------------
+// IP address of interface via `ip addr`
+// ---------------------------------------------------------------------------
+
+/// Get the IPv4 address of a specific interface using `ip addr show`.
+fn discover_iface_ip(iface: &str) -> Option<String> {
+    let output = Command::new("ip")
+        .args(["-4", "addr", "show", iface])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Format: "    inet 192.168.3.32/24 brd 192.168.3.255 scope global dynamic enp5s0"
+    for line in stdout.lines() {
+        let line = line.trim();
+        if line.starts_with("inet ") {
+            // Extract IP from "inet 192.168.3.32/24 ..."
+            let ip_cidr = line.split_whitespace().nth(1)?;
+            let ip = ip_cidr.split('/').next()?;
+            return Some(ip.to_string());
+        }
+    }
+
     None
 }
 
-/// Collect all LOCAL IPv4 addresses from `/proc/net/fib_trie`.
-/// The format has blocks like:
-///   +-- <prefix>/<bits> ...
-///     /32 host LOCAL
-///   The IP is on the line before "32 host LOCAL".
-fn fib_trie_local_ips() -> Vec<String> {
-    let content = match fs::read_to_string("/proc/net/fib_trie") {
-        Ok(c) => c,
-        Err(_) => return vec![],
-    };
+// ---------------------------------------------------------------------------
+// DNS server and domain
+// ---------------------------------------------------------------------------
 
-    let lines: Vec<&str> = content.lines().collect();
-    let mut result = Vec::new();
-    for (i, line) in lines.iter().enumerate() {
-        if line.contains("/32 host LOCAL") {
-            // The IP address appears one line above this line (the leaf node)
-            if i >= 1 {
-                let candidate = lines[i - 1].trim();
-                // Strip the "+-- " / "|-- " prefix that fib_trie uses
-                let ip_str = candidate
-                    .trim_start_matches('+')
-                    .trim_start_matches('|')
-                    .trim_start_matches("-- ")
-                    .trim_start_matches("--")
-                    .trim();
-                // Keep only the address part (before any '/')
-                let ip_str = ip_str.split('/').next().unwrap_or("").trim();
-                if ip_str.parse::<IpAddr>().is_ok() {
-                    result.push(ip_str.to_string());
+/// Discover DNS server and search domain.
+/// Tries multiple methods in order of preference:
+/// 1. resolvectl (systemd-resolved) - if systemd-resolved is active
+/// 2. nmcli (NetworkManager) - common on desktop Linux
+/// 3. /run/systemd/resolve/resolv.conf - real DNS when using systemd stub
+/// 4. /etc/resolv.conf - classic fallback
+fn discover_dns_info(default_iface: Option<&str>) -> (Option<String>, Option<String>) {
+    // Check if systemd-resolved is being used (stub resolver in resolv.conf)
+    let uses_systemd_resolved = is_systemd_resolved_active();
+
+    // 1. Try resolvectl if systemd-resolved is active
+    if uses_systemd_resolved {
+        if let Some(iface) = default_iface {
+            if let Some((dns, domain)) = try_resolvectl(iface) {
+                if dns.is_some() {
+                    return (dns, domain);
                 }
             }
         }
     }
-    result
-}
 
-// ---------------------------------------------------------------------------
-// Default gateway
-// ---------------------------------------------------------------------------
-
-/// Read the default gateway from `/proc/net/route`.
-/// The Gateway field is a little-endian hex-encoded 32-bit IPv4 address.
-fn discover_gateway() -> Option<String> {
-    let content = fs::read_to_string("/proc/net/route").ok()?;
-    for line in content.lines().skip(1) {
-        let cols: Vec<&str> = line.split_whitespace().collect();
-        if cols.len() < 3 {
-            continue;
-        }
-        if cols[1] == "00000000" {
-            let gw_hex = cols[2];
-            return parse_hex_ip(gw_hex);
+    // 2. Try nmcli (NetworkManager)
+    if let Some(iface) = default_iface {
+        if let Some((dns, domain)) = try_nmcli(iface) {
+            if dns.is_some() {
+                return (dns, domain);
+            }
         }
     }
-    None
+
+    // 3. Try systemd-resolved's upstream resolv.conf (not the stub)
+    let systemd_resolv = Path::new("/run/systemd/resolve/resolv.conf");
+    if systemd_resolv.exists() {
+        let (dns, domain) = parse_resolv_conf(systemd_resolv);
+        if dns.is_some() {
+            return (dns, domain);
+        }
+    }
+
+    // 4. Fallback to /etc/resolv.conf
+    parse_resolv_conf(Path::new("/etc/resolv.conf"))
 }
 
-/// Decode a little-endian hex IPv4 address (as found in `/proc/net/route`)
-/// into a dotted-decimal string.
-fn parse_hex_ip(hex: &str) -> Option<String> {
-    if hex.len() != 8 {
+/// Check if systemd-resolved is active by looking for the stub resolver.
+fn is_systemd_resolved_active() -> bool {
+    // Check if resolv.conf points to the stub resolver
+    if let Ok(content) = fs::read_to_string("/etc/resolv.conf") {
+        if content.contains("127.0.0.53") {
+            return true;
+        }
+    }
+    // Also check if the runtime directory exists
+    Path::new("/run/systemd/resolve").exists()
+}
+
+/// Try to get DNS info using resolvectl (systemd-resolved).
+fn try_resolvectl(iface: &str) -> Option<(Option<String>, Option<String>)> {
+    let output = Command::new("resolvectl")
+        .args(["status", iface])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
         return None;
     }
-    let n = u32::from_str_radix(hex, 16).ok()?;
-    // /proc/net/route stores the value in host byte order on little-endian CPUs
-    // which means the bytes are in reverse order when compared to network order.
-    let b0 = (n & 0xFF) as u8;
-    let b1 = ((n >> 8) & 0xFF) as u8;
-    let b2 = ((n >> 16) & 0xFF) as u8;
-    let b3 = ((n >> 24) & 0xFF) as u8;
-    Some(format!("{b0}.{b1}.{b2}.{b3}"))
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut dns = None;
+    let mut domain = None;
+
+    for line in stdout.lines() {
+        let line = line.trim();
+
+        // "Current DNS Server: 192.168.0.13" or "DNS Servers: 192.168.0.13 192.168.0.8"
+        if dns.is_none() {
+            if line.starts_with("Current DNS Server:") {
+                dns = line.split(':').nth(1).map(|s| s.trim().to_string());
+            } else if line.starts_with("DNS Servers:") {
+                dns = line
+                    .split(':')
+                    .nth(1)
+                    .and_then(|s| s.split_whitespace().next())
+                    .map(|s| s.to_string());
+            }
+        }
+
+        // "DNS Domain: corp.local" or "Search Domains: corp.local"
+        if domain.is_none() {
+            if line.starts_with("DNS Domain:") || line.starts_with("Search Domains:") {
+                let d = line.split(':').nth(1).map(|s| s.trim().to_string());
+                if is_valid_domain(&d) {
+                    domain = d;
+                }
+            }
+        }
+    }
+
+    Some((dns, domain))
 }
 
-// ---------------------------------------------------------------------------
-// DNS server and search domain
-// ---------------------------------------------------------------------------
+/// Try to get DNS info using nmcli (NetworkManager).
+fn try_nmcli(iface: &str) -> Option<(Option<String>, Option<String>)> {
+    // Get DNS servers
+    let dns_output = Command::new("nmcli")
+        .args(["-t", "-f", "IP4.DNS", "device", "show", iface])
+        .output()
+        .ok()?;
 
-/// Read the first `nameserver` entry from `/etc/resolv.conf`.
-fn discover_dns() -> Option<String> {
-    parse_resolv_conf(Path::new("/etc/resolv.conf")).0
+    let mut dns = None;
+    let mut domain = None;
+
+    if dns_output.status.success() {
+        let stdout = String::from_utf8_lossy(&dns_output.stdout);
+        // Format: "IP4.DNS[1]:192.168.0.13"
+        for line in stdout.lines() {
+            if line.starts_with("IP4.DNS") {
+                if let Some(server) = line.split(':').nth(1) {
+                    let server = server.trim();
+                    if !server.is_empty() && server != "127.0.0.53" {
+                        dns = Some(server.to_string());
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // Get search domain
+    let domain_output = Command::new("nmcli")
+        .args(["-t", "-f", "IP4.DOMAIN", "device", "show", iface])
+        .output()
+        .ok();
+
+    if let Some(output) = domain_output {
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            // Format: "IP4.DOMAIN[1]:corp.local"
+            for line in stdout.lines() {
+                if line.starts_with("IP4.DOMAIN") {
+                    if let Some(d) = line.split(':').nth(1) {
+                        let d = Some(d.trim().to_string());
+                        if is_valid_domain(&d) {
+                            domain = d;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if dns.is_some() || domain.is_some() {
+        Some((dns, domain))
+    } else {
+        None
+    }
 }
 
-/// Read the first `search` / `domain` entry from `/etc/resolv.conf`.
-fn discover_domain() -> Option<String> {
-    parse_resolv_conf(Path::new("/etc/resolv.conf")).1
+/// Check if a domain string is valid (not empty, not ".", not "(none)").
+fn is_valid_domain(d: &Option<String>) -> bool {
+    d.as_ref()
+        .map(|s| !s.is_empty() && s != "." && s != "(none)")
+        .unwrap_or(false)
 }
 
-/// Parse `/etc/resolv.conf` and return `(first_nameserver, first_domain)`.
+/// Parse a resolv.conf file and return `(first_nameserver, first_domain)`.
 fn parse_resolv_conf(path: &Path) -> (Option<String>, Option<String>) {
     let content = match fs::read_to_string(path) {
         Ok(c) => c,
@@ -163,11 +287,22 @@ fn parse_resolv_conf(path: &Path) -> (Option<String>, Option<String>) {
             continue;
         }
         if ns.is_none() && line.starts_with("nameserver") {
-            ns = line.split_whitespace().nth(1).map(String::from);
+            let server = line.split_whitespace().nth(1).map(String::from);
+            // Skip systemd-resolved stub and localhost
+            if server
+                .as_ref()
+                .map(|s| !s.starts_with("127."))
+                .unwrap_or(false)
+            {
+                ns = server;
+            }
         }
         if domain.is_none() {
             if line.starts_with("domain") || line.starts_with("search") {
-                domain = line.split_whitespace().nth(1).map(String::from);
+                let d = line.split_whitespace().nth(1).map(String::from);
+                if is_valid_domain(&d) {
+                    domain = d;
+                }
             }
         }
     }
@@ -178,24 +313,6 @@ fn parse_resolv_conf(path: &Path) -> (Option<String>, Option<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_parse_hex_ip_loopback() {
-        // 127.0.0.1 in little-endian hex = 0100007F
-        assert_eq!(parse_hex_ip("0100007F"), Some("127.0.0.1".to_string()));
-    }
-
-    #[test]
-    fn test_parse_hex_ip_gateway() {
-        // 192.168.1.1 in little-endian hex = 0101A8C0
-        assert_eq!(parse_hex_ip("0101A8C0"), Some("192.168.1.1".to_string()));
-    }
-
-    #[test]
-    fn test_parse_hex_ip_invalid() {
-        assert_eq!(parse_hex_ip("ZZZZZZZZ"), None);
-        assert_eq!(parse_hex_ip("short"), None);
-    }
 
     #[test]
     fn test_parse_resolv_conf() {

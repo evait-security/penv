@@ -128,10 +128,19 @@ vars:
 
 ## Network Discovery
 
-Discovery uses standard Linux mechanisms without external dependencies:
-- `/proc/net/fib_trie` - Local IP addresses
-- `/proc/net/route` - Default gateway and route interface
-- `/etc/resolv.conf` - DNS server and search domain
+Discovery uses standard Linux tools with automatic fallbacks:
+
+**IP and Gateway:**
+- `ip route` - Default route interface and gateway
+- `ip addr` - IP address of the default route interface
+
+**DNS Server and Domain (tried in order):**
+1. `resolvectl` - systemd-resolved (only if active)
+2. `nmcli` - NetworkManager
+3. `/run/systemd/resolve/resolv.conf` - upstream DNS when using systemd stub
+4. `/etc/resolv.conf` - classic fallback
+
+Works on systems with systemd-resolved, NetworkManager, or plain resolv.conf.
 
 ## License
 
