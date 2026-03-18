@@ -30,6 +30,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             cli::print_completions(shell);
             Ok(())
         }
+        Commands::ShellInit { shell } => cmd_shell_init(shell),
     }
 }
 
@@ -201,11 +202,101 @@ fn cmd_load(profile_name: &str) -> anyhow::Result<()> {
         fs::create_dir_all(parent)?;
     }
     fs::copy(&src, &dst)?;
-    println!(
-        "Profile '{profile_name}' loaded. Run `eval \"$(penv init)\"` to apply the variables."
-    );
+    println!("Profile '{profile_name}' loaded.");
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// penv shell-init
+// ---------------------------------------------------------------------------
+
+fn cmd_shell_init(shell: Option<clap_complete::Shell>) -> anyhow::Result<()> {
+    use clap_complete::Shell;
+
+    let shell = shell.unwrap_or_else(detect_shell);
+
+    match shell {
+        Shell::Bash => print!("{}", SHELL_INIT_BASH),
+        Shell::Zsh => print!("{}", SHELL_INIT_ZSH),
+        Shell::Fish => print!("{}", SHELL_INIT_FISH),
+        _ => anyhow::bail!("Unsupported shell. Use bash, zsh, or fish."),
+    }
+
+    Ok(())
+}
+
+fn detect_shell() -> clap_complete::Shell {
+    use clap_complete::Shell;
+
+    if let Ok(shell) = std::env::var("SHELL") {
+        if shell.ends_with("/fish") {
+            return Shell::Fish;
+        }
+        if shell.ends_with("/zsh") {
+            return Shell::Zsh;
+        }
+    }
+    Shell::Bash
+}
+
+const SHELL_INIT_BASH: &str = r#"# penv shell integration
+# Wrapper function that auto-reloads environment after modifying commands
+penv() {
+    local cmd="$1"
+    command penv "$@"
+    local ret=$?
+    if [[ $ret -eq 0 ]]; then
+        case "$cmd" in
+            set|unset|load|discover)
+                eval "$(command penv init)"
+                ;;
+        esac
+    fi
+    return $ret
+}
+
+# Initial load
+eval "$(command penv init)"
+"#;
+
+const SHELL_INIT_ZSH: &str = r#"# penv shell integration
+# Wrapper function that auto-reloads environment after modifying commands
+penv() {
+    local cmd="$1"
+    command penv "$@"
+    local ret=$?
+    if [[ $ret -eq 0 ]]; then
+        case "$cmd" in
+            set|unset|load|discover)
+                eval "$(command penv init)"
+                ;;
+        esac
+    fi
+    return $ret
+}
+
+# Initial load
+eval "$(command penv init)"
+"#;
+
+const SHELL_INIT_FISH: &str = r#"# penv shell integration
+# Wrapper function that auto-reloads environment after modifying commands
+function penv
+    set -l cmd $argv[1]
+    command penv $argv
+    set -l ret $status
+    if test $ret -eq 0
+        switch "$cmd"
+            case set unset load discover
+                eval (command penv init | string replace -a 'export ' 'set -gx ' | string replace -a '=' ' ')
+        end
+    end
+    return $ret
+end
+
+# Initial load
+eval (command penv init | string replace -a 'export ' 'set -gx ' | string replace -a '=' ' ')
+"#;
 
 // ---------------------------------------------------------------------------
 // Helpers

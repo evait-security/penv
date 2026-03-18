@@ -55,6 +55,13 @@ pub enum Commands {
         #[arg(value_enum)]
         shell: Shell,
     },
+
+    /// Output shell function wrapper for auto-reload (add to .bashrc/.zshrc)
+    ShellInit {
+        /// Shell type (bash, zsh, fish). Auto-detected if omitted.
+        #[arg(value_enum)]
+        shell: Option<Shell>,
+    },
 }
 
 pub fn print_completions(shell: Shell) {

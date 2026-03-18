@@ -24,10 +24,20 @@ cp target/release/penv ~/.local/bin/
 Add to your `.bashrc` or `.zshrc`:
 
 ```bash
-eval "$(penv init)"
+eval "$(penv shell-init)"
 ```
 
-This exports all variables from `current.yaml` into your shell session.
+This installs a wrapper function that:
+- Exports all variables from `current.yaml` on shell startup
+- Auto-reloads variables after `penv set`, `penv unset`, `penv load`, or `penv discover`
+
+For fish shell:
+
+```fish
+eval (penv shell-init fish)
+```
+
+**Manual mode**: If you prefer explicit control, use `eval "$(penv init)"` instead. You'll need to re-run it after each change.
 
 ## Usage
 
@@ -64,8 +74,9 @@ Load a saved profile:
 
 ```bash
 penv load customer_1
-eval "$(penv init)"
 ```
+
+With `shell-init`, variables are reloaded automatically.
 
 Profiles are stored as `~/.local/penv/<name>.yaml`.
 
@@ -89,6 +100,7 @@ penv completions fish > ~/.config/fish/completions/penv.fish
 | Command | Description |
 |---------|-------------|
 | `penv init` | Output export commands for eval |
+| `penv shell-init [shell]` | Output shell wrapper with auto-reload (bash/zsh/fish) |
 | `penv discover` | Auto-detect network info and save to current.yaml |
 | `penv set <key> <value>` | Add or update a variable |
 | `penv unset <key>` | Remove a variable |
