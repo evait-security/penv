@@ -20,7 +20,7 @@ fn main() {
 fn run(cli: Cli) -> anyhow::Result<()> {
     match cli.command {
         Commands::Init => cmd_init(),
-        Commands::Discover => cmd_discover(),
+        Commands::Discover { dry_run } => cmd_discover(dry_run),
         Commands::Set { key, value } => cmd_set(&key, &value),
         Commands::Unset { key } => cmd_unset(&key),
         Commands::List => cmd_list(),
@@ -80,7 +80,7 @@ fn shell_single_quote(value: &str) -> String {
 // penv discover
 // ---------------------------------------------------------------------------
 
-fn cmd_discover() -> anyhow::Result<()> {
+fn cmd_discover(dry_run: bool) -> anyhow::Result<()> {
     let path = Config::current_path()?;
     let mut cfg = Config::load(&path)?;
 
@@ -114,8 +114,12 @@ fn cmd_discover() -> anyhow::Result<()> {
         eprintln!("penv: could not determine domain name");
     }
 
-    cfg.save(&path)?;
-    println!("\nSaved to {}", path.display());
+    if dry_run {
+        println!("\n(dry run – not saved)");
+    } else {
+        cfg.save(&path)?;
+        println!("\nSaved to {}", path.display());
+    }
     Ok(())
 }
 

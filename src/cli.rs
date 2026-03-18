@@ -18,7 +18,11 @@ pub enum Commands {
     Init,
 
     /// Auto-discover network info (IP, gateway, DNS, domain) and save to current.yaml
-    Discover,
+    Discover {
+        /// Show discovered values without saving to current.yaml
+        #[arg(long, short = 'n')]
+        dry_run: bool,
+    },
 
     /// Add or update a variable in current.yaml
     Set {
