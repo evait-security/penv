@@ -134,13 +134,16 @@ Discovery uses standard Linux tools with automatic fallbacks:
 - `ip route` - Default route interface and gateway
 - `ip addr` - IP address of the default route interface
 
-**DNS Server and Domain (tried in order):**
+**DNS Server and Domain (tried in order, merges results):**
 1. `resolvectl` - systemd-resolved (only if active)
 2. `nmcli` - NetworkManager
-3. `/run/systemd/resolve/resolv.conf` - upstream DNS when using systemd stub
-4. `/etc/resolv.conf` - classic fallback
+3. DHCP lease files:
+   - `/run/systemd/netif/leases/<ifindex>` (systemd-networkd)
+   - `/var/lib/dhcp/dhclient.*.leases` (dhclient)
+4. `/run/systemd/resolve/resolv.conf` - upstream DNS when using systemd stub
+5. `/etc/resolv.conf` - classic fallback
 
-Works on systems with systemd-resolved, NetworkManager, or plain resolv.conf.
+Works on systems with systemd-networkd, systemd-resolved, NetworkManager, dhclient, or plain resolv.conf.
 
 ## License
 

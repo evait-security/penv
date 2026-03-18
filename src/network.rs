@@ -109,19 +109,26 @@ fn discover_iface_ip(iface: &str) -> Option<String> {
 /// Discover DNS server and search domain.
 /// Tries multiple methods in order of preference:
 /// 1. resolvectl (systemd-resolved) - if systemd-resolved is active
-/// 2. nmcli (NetworkManager) - common on desktop Linux
-/// 3. /run/systemd/resolve/resolv.conf - real DNS when using systemd stub
-/// 4. /etc/resolv.conf - classic fallback
+/// 2. nmcli (NetworkManager) - common on desktop Linux  
+/// 3. DHCP lease files (systemd-networkd, dhclient)
+/// 4. /run/systemd/resolve/resolv.conf - real DNS when using systemd stub
+/// 5. /etc/resolv.conf - classic fallback
 fn discover_dns_info(default_iface: Option<&str>) -> (Option<String>, Option<String>) {
-    // Check if systemd-resolved is being used (stub resolver in resolv.conf)
     let uses_systemd_resolved = is_systemd_resolved_active();
+
+    // Collect DNS and domain separately - they might come from different sources
+    let mut dns: Option<String> = None;
+    let mut domain: Option<String> = None;
 
     // 1. Try resolvectl if systemd-resolved is active
     if uses_systemd_resolved {
         if let Some(iface) = default_iface {
-            if let Some((dns, domain)) = try_resolvectl(iface) {
-                if dns.is_some() {
-                    return (dns, domain);
+            if let Some((d, dom)) = try_resolvectl(iface) {
+                if dns.is_none() && d.is_some() {
+                    dns = d;
+                }
+                if domain.is_none() && dom.is_some() {
+                    domain = dom;
                 }
             }
         }
@@ -129,24 +136,54 @@ fn discover_dns_info(default_iface: Option<&str>) -> (Option<String>, Option<Str
 
     // 2. Try nmcli (NetworkManager)
     if let Some(iface) = default_iface {
-        if let Some((dns, domain)) = try_nmcli(iface) {
-            if dns.is_some() {
-                return (dns, domain);
+        if let Some((d, dom)) = try_nmcli(iface) {
+            if dns.is_none() && d.is_some() {
+                dns = d;
+            }
+            if domain.is_none() && dom.is_some() {
+                domain = dom;
             }
         }
     }
 
-    // 3. Try systemd-resolved's upstream resolv.conf (not the stub)
-    let systemd_resolv = Path::new("/run/systemd/resolve/resolv.conf");
-    if systemd_resolv.exists() {
-        let (dns, domain) = parse_resolv_conf(systemd_resolv);
-        if dns.is_some() {
-            return (dns, domain);
+    // 3. Try DHCP lease files (great source for domain name)
+    if let Some(iface) = default_iface {
+        if let Some((d, dom)) = try_dhcp_lease(iface) {
+            if dns.is_none() && d.is_some() {
+                dns = d;
+            }
+            if domain.is_none() && dom.is_some() {
+                domain = dom;
+            }
         }
     }
 
-    // 4. Fallback to /etc/resolv.conf
-    parse_resolv_conf(Path::new("/etc/resolv.conf"))
+    // 4. Try systemd-resolved's upstream resolv.conf
+    if dns.is_none() || domain.is_none() {
+        let systemd_resolv = Path::new("/run/systemd/resolve/resolv.conf");
+        if systemd_resolv.exists() {
+            let (d, dom) = parse_resolv_conf(systemd_resolv);
+            if dns.is_none() && d.is_some() {
+                dns = d;
+            }
+            if domain.is_none() && dom.is_some() {
+                domain = dom;
+            }
+        }
+    }
+
+    // 5. Fallback to /etc/resolv.conf
+    if dns.is_none() || domain.is_none() {
+        let (d, dom) = parse_resolv_conf(Path::new("/etc/resolv.conf"));
+        if dns.is_none() {
+            dns = d;
+        }
+        if domain.is_none() {
+            domain = dom;
+        }
+    }
+
+    (dns, domain)
 }
 
 /// Check if systemd-resolved is active by looking for the stub resolver.
@@ -262,6 +299,134 @@ fn try_nmcli(iface: &str) -> Option<(Option<String>, Option<String>)> {
     } else {
         None
     }
+}
+
+/// Try to get DNS/domain from DHCP lease files.
+/// Supports systemd-networkd and dhclient.
+fn try_dhcp_lease(iface: &str) -> Option<(Option<String>, Option<String>)> {
+    // Try systemd-networkd lease first
+    if let Some(result) = try_systemd_networkd_lease(iface) {
+        return Some(result);
+    }
+
+    // Try dhclient lease
+    if let Some(result) = try_dhclient_lease(iface) {
+        return Some(result);
+    }
+
+    None
+}
+
+/// Parse systemd-networkd DHCP lease from /run/systemd/netif/leases/<ifindex>
+fn try_systemd_networkd_lease(iface: &str) -> Option<(Option<String>, Option<String>)> {
+    // Get interface index from /sys/class/net/<iface>/ifindex
+    let ifindex_path = format!("/sys/class/net/{}/ifindex", iface);
+    let ifindex = fs::read_to_string(&ifindex_path).ok()?.trim().to_string();
+
+    let lease_path = format!("/run/systemd/netif/leases/{}", ifindex);
+    let content = fs::read_to_string(&lease_path).ok()?;
+
+    let mut dns = None;
+    let mut domain = None;
+
+    for line in content.lines() {
+        let line = line.trim();
+        // DNS=192.168.0.13 192.168.0.8
+        if line.starts_with("DNS=") {
+            let servers = line.strip_prefix("DNS=")?;
+            let first = servers.split_whitespace().next()?;
+            if !first.starts_with("127.") {
+                dns = Some(first.to_string());
+            }
+        }
+        // DOMAINNAME=orion.intern
+        if line.starts_with("DOMAINNAME=") {
+            let d = line.strip_prefix("DOMAINNAME=")?.trim().to_string();
+            if !d.is_empty() && d != "." {
+                domain = Some(d);
+            }
+        }
+        // Also check DOMAINS= (some versions use this)
+        if domain.is_none() && line.starts_with("DOMAINS=") {
+            let d = line.strip_prefix("DOMAINS=")?
+                .split_whitespace()
+                .next()?
+                .trim()
+                .to_string();
+            if !d.is_empty() && d != "." {
+                domain = Some(d);
+            }
+        }
+    }
+
+    if dns.is_some() || domain.is_some() {
+        Some((dns, domain))
+    } else {
+        None
+    }
+}
+
+/// Parse dhclient lease files from /var/lib/dhcp/
+fn try_dhclient_lease(iface: &str) -> Option<(Option<String>, Option<String>)> {
+    // Common dhclient lease file locations
+    let lease_paths = [
+        format!("/var/lib/dhcp/dhclient.{}.leases", iface),
+        format!("/var/lib/dhcp/dhclient-{}.leases", iface),
+        format!("/var/lib/dhclient/dhclient.{}.leases", iface),
+        "/var/lib/dhcp/dhclient.leases".to_string(),
+    ];
+
+    for path in &lease_paths {
+        if let Ok(content) = fs::read_to_string(path) {
+            // Parse the last lease block (most recent)
+            if let Some(result) = parse_dhclient_lease_content(&content) {
+                if result.0.is_some() || result.1.is_some() {
+                    return Some(result);
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Parse dhclient lease file content.
+/// Format:
+/// lease {
+///   option domain-name-servers 192.168.0.13;
+///   option domain-name "corp.local";
+/// }
+fn parse_dhclient_lease_content(content: &str) -> Option<(Option<String>, Option<String>)> {
+    let mut dns = None;
+    let mut domain = None;
+
+    // Find the last lease block
+    let last_lease = content.rsplit("lease {").next()?;
+
+    for line in last_lease.lines() {
+        let line = line.trim().trim_end_matches(';');
+
+        if line.starts_with("option domain-name-servers") {
+            let servers = line.strip_prefix("option domain-name-servers")?.trim();
+            let first = servers.split(',').next()?.trim();
+            if !first.starts_with("127.") {
+                dns = Some(first.to_string());
+            }
+        }
+
+        if line.starts_with("option domain-name") {
+            let d = line
+                .strip_prefix("option domain-name")?
+                .trim()
+                .trim_matches('"')
+                .to_string();
+            if !d.is_empty() && d != "." {
+                domain = Some(d);
+            }
+        }
+    }
+
+    Some((dns, domain))
 }
 
 /// Check if a domain string is valid (not empty, not ".", not "(none)").
