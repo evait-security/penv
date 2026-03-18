@@ -1,1 +1,125 @@
 # penv
+
+Pentester Environment - A CLI tool for managing network and customer-specific environment variables across shell sessions on Linux.
+
+## Overview
+
+`penv` auto-discovers network configuration and exposes it as shell variables. It supports saving/loading profiles for different customer environments, making it easy to switch contexts during engagements.
+
+Variables are stored in `~/.local/penv/current.yaml` and exported as lowercase shell variables (e.g., `$ip`, `$dc`, `$domain`) for direct use in commands like:
+
+```bash
+nxc smb $dc -d $domain -u $user -p $password
+```
+
+## Installation
+
+```bash
+cargo build --release
+cp target/release/penv ~/.local/bin/
+```
+
+## Shell Setup
+
+Add to your `.bashrc` or `.zshrc`:
+
+```bash
+eval "$(penv init)"
+```
+
+This exports all variables from `current.yaml` into your shell session.
+
+## Usage
+
+### Auto-discover network environment
+
+```bash
+penv discover
+```
+
+Detects and saves:
+- `ip` - Local IP of the primary LAN adapter
+- `gateway` - Default gateway
+- `dc` - DNS server (useful as DC in AD environments)
+- `domain` - DNS search domain
+
+### Manage variables
+
+```bash
+penv set user "USERNAME"
+penv set password "P@ssw0rd!"
+penv unset password
+penv list
+```
+
+### Profile management
+
+Save the current configuration as a named profile:
+
+```bash
+penv store customer_1
+```
+
+Load a saved profile:
+
+```bash
+penv load customer_1
+eval "$(penv init)"
+```
+
+Profiles are stored as `~/.local/penv/<name>.yaml`.
+
+### Shell completions
+
+Generate completions for your shell:
+
+```bash
+# Bash
+penv completions bash > ~/.local/share/bash-completion/completions/penv
+
+# Zsh
+penv completions zsh > ~/.zfunc/_penv
+
+# Fish
+penv completions fish > ~/.config/fish/completions/penv.fish
+```
+
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `penv init` | Output export commands for eval |
+| `penv discover` | Auto-detect network info and save to current.yaml |
+| `penv set <key> <value>` | Add or update a variable |
+| `penv unset <key>` | Remove a variable |
+| `penv list` | Print all active variables |
+| `penv store <name>` | Save current state as a profile |
+| `penv load <name>` | Load a profile into current.yaml |
+| `penv completions <shell>` | Generate shell completions |
+
+## Configuration Files
+
+- `~/.local/penv/current.yaml` - Active configuration
+- `~/.local/penv/<profile>.yaml` - Saved profiles
+
+Example YAML:
+
+```yaml
+vars:
+  ip: 192.168.1.50
+  gateway: 192.168.1.1
+  dc: 192.168.1.10
+  domain: corp.local
+  user: administrator
+```
+
+## Network Discovery
+
+Discovery uses standard Linux mechanisms without external dependencies:
+- `/proc/net/fib_trie` - Local IP addresses
+- `/proc/net/route` - Default gateway and route interface
+- `/etc/resolv.conf` - DNS server and search domain
+
+## License
+
+MIT - see [LICENSE](LICENSE)
