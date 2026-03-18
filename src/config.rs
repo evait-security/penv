@@ -38,18 +38,18 @@ impl Config {
     }
 
     /// Return the canonical path of the active config:
-    /// `~/.local/penv/current.yaml`.
+    /// `~/.local/share/penv/current.yaml`.
     pub fn current_path() -> anyhow::Result<PathBuf> {
         let home = dirs::home_dir()
             .ok_or_else(|| anyhow::anyhow!("Cannot determine home directory"))?;
-        Ok(home.join(".local").join("penv").join("current.yaml"))
+        Ok(home.join(".local").join("share").join("penv").join("current.yaml"))
     }
 
     /// Return the path for a named profile:
-    /// `~/.local/penv/<name>.yaml`.
+    /// `~/.local/share/penv/<name>.yaml`.
     pub fn profile_path(name: &str) -> anyhow::Result<PathBuf> {
         let home = dirs::home_dir()
             .ok_or_else(|| anyhow::anyhow!("Cannot determine home directory"))?;
-        Ok(home.join(".local").join("penv").join(format!("{name}.yaml")))
+        Ok(home.join(".local").join("share").join("penv").join(format!("{name}.yaml")))
     }
 }

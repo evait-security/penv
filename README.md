@@ -6,7 +6,7 @@ Pentester Environment - A CLI tool for managing network and customer-specific en
 
 `penv` auto-discovers network configuration and exposes it as shell variables. It supports saving/loading profiles for different customer environments, making it easy to switch contexts during engagements.
 
-Variables are stored in `~/.local/penv/current.yaml` and exported as lowercase shell variables (e.g., `$ip`, `$dc`, `$domain`) for direct use in commands like:
+Variables are stored in `~/.local/share/penv/current.yaml` and exported as lowercase shell variables (e.g., `$ip`, `$dc`, `$domain`) for direct use in commands like:
 
 ```bash
 nxc smb $dc -d $domain -u $user -p $password
@@ -78,7 +78,7 @@ penv load customer_1
 
 With `shell-init`, variables are reloaded automatically.
 
-Profiles are stored as `~/.local/penv/<name>.yaml`.
+Profiles are stored as `~/.local/share/penv/<name>.yaml`.
 
 ### Shell completions
 
@@ -112,8 +112,8 @@ penv completions fish > ~/.config/fish/completions/penv.fish
 
 ## Configuration Files
 
-- `~/.local/penv/current.yaml` - Active configuration
-- `~/.local/penv/<profile>.yaml` - Saved profiles
+- `~/.local/share/penv/current.yaml` - Active configuration
+- `~/.local/share/penv/<profile>.yaml` - Saved profiles
 
 Example YAML:
 

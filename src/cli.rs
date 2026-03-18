@@ -42,7 +42,7 @@ pub enum Commands {
 
     /// Save current state as a named profile
     Store {
-        /// Profile name (stored as ~/.local/penv/<name>.yaml)
+        /// Profile name (stored as ~/.local/share/penv/<name>.yaml)
         profile_name: String,
     },
 
