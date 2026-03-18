@@ -105,6 +105,7 @@ penv completions fish > ~/.config/fish/completions/penv.fish
 | `penv set <key> <value>` | Add or update a variable |
 | `penv unset <key>` | Remove a variable |
 | `penv list` | Print all active variables |
+| `penv clean` | Wipe current.yaml |
 | `penv store <name>` | Save current state as a profile |
 | `penv load <name>` | Load a profile into current.yaml |
 | `penv completions <shell>` | Generate shell completions |

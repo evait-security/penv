@@ -37,6 +37,9 @@ pub enum Commands {
     /// Print all currently active variables
     List,
 
+    /// Wipe current.yaml (no confirmation)
+    Clean,
+
     /// Save current state as a named profile
     Store {
         /// Profile name (stored as ~/.local/penv/<name>.yaml)

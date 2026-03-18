@@ -24,6 +24,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Set { key, value } => cmd_set(&key, &value),
         Commands::Unset { key } => cmd_unset(&key),
         Commands::List => cmd_list(),
+        Commands::Clean => cmd_clean(),
         Commands::Store { profile_name } => cmd_store(&profile_name),
         Commands::Load { profile_name } => cmd_load(&profile_name),
         Commands::Completions { shell } => {
@@ -172,6 +173,19 @@ fn cmd_list() -> anyhow::Result<()> {
 }
 
 // ---------------------------------------------------------------------------
+// penv clean
+// ---------------------------------------------------------------------------
+
+fn cmd_clean() -> anyhow::Result<()> {
+    let path = Config::current_path()?;
+    if path.exists() {
+        fs::remove_file(&path)?;
+    }
+    println!("Cleared current.yaml");
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // penv store
 // ---------------------------------------------------------------------------
 
@@ -247,7 +261,7 @@ penv() {
     local ret=$?
     if [[ $ret -eq 0 ]]; then
         case "$cmd" in
-            set|unset|load|discover)
+            set|unset|load|discover|clean)
                 eval "$(command penv init)"
                 ;;
         esac
@@ -267,7 +281,7 @@ penv() {
     local ret=$?
     if [[ $ret -eq 0 ]]; then
         case "$cmd" in
-            set|unset|load|discover)
+            set|unset|load|discover|clean)
                 eval "$(command penv init)"
                 ;;
         esac
@@ -287,7 +301,7 @@ function penv
     set -l ret $status
     if test $ret -eq 0
         switch "$cmd"
-            case set unset load discover
+            case set unset load discover clean
                 eval (command penv init | string replace -a 'export ' 'set -gx ' | string replace -a '=' ' ')
         end
     end
