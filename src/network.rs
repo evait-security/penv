@@ -10,6 +10,7 @@ pub struct NetworkInfo {
     pub ip: Option<String>,
     pub gateway: Option<String>,
     pub dns: Option<String>,
+    pub dc_host: Option<String>,
     pub domain: Option<String>,
 }
 
@@ -20,12 +21,32 @@ pub fn discover() -> NetworkInfo {
     let ip = iface.as_ref().and_then(|i| discover_iface_ip(i));
     let (dns, domain) = discover_dns_info(iface.as_deref());
 
+    // Try reverse DNS lookup for dc_host
+    let dc_host = dns.as_ref().and_then(|ip| reverse_dns_lookup(ip));
+
     NetworkInfo {
         ip,
         gateway,
         dns,
+        dc_host,
         domain,
     }
+}
+
+/// Perform reverse DNS lookup for an IP address.
+/// Returns the hostname if resolvable, None otherwise.
+fn reverse_dns_lookup(ip: &str) -> Option<String> {
+    use std::net::IpAddr;
+
+    let addr: IpAddr = ip.parse().ok()?;
+    let hostname = dns_lookup::lookup_addr(&addr).ok()?;
+
+    // Don't return if it's just the IP address echoed back
+    if hostname == ip {
+        return None;
+    }
+
+    Some(hostname)
 }
 
 // ---------------------------------------------------------------------------

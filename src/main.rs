@@ -98,6 +98,9 @@ fn cmd_discover(dry_run: bool, json: bool) -> anyhow::Result<()> {
     if let Some(dns) = info.dns {
         discovered.insert("dc".to_string(), dns);
     }
+    if let Some(dc_host) = info.dc_host {
+        discovered.insert("dc_host".to_string(), dc_host);
+    }
     if let Some(domain) = info.domain {
         discovered.insert("domain".to_string(), domain);
     }
@@ -125,6 +128,10 @@ fn cmd_discover(dry_run: bool, json: bool) -> anyhow::Result<()> {
         println!("dc       = {}", discovered["dc"]);
     } else {
         eprintln!("penv: could not determine DNS/DC server");
+    }
+
+    if discovered.contains_key("dc_host") {
+        println!("dc_host  = {}", discovered["dc_host"]);
     }
 
     if discovered.contains_key("domain") {
