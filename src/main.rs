@@ -33,7 +33,9 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             cli::print_completions(shell);
             Ok(())
         }
-        Commands::ShellInit { shell } => cmd_shell_init(shell),
+        Commands::ShellInit { shell, autocomplete } => cmd_shell_init(shell, autocomplete),
+        Commands::ListProfiles => cmd_list_profiles(),
+        Commands::ListVars => cmd_list_vars(),
     }
 }
 
@@ -314,18 +316,49 @@ fn cmd_drop(profile_name: &str) -> anyhow::Result<()> {
 // penv shell-init
 // ---------------------------------------------------------------------------
 
-fn cmd_shell_init(shell: Option<clap_complete::Shell>) -> anyhow::Result<()> {
+fn cmd_shell_init(shell: Option<clap_complete::Shell>, autocomplete: bool) -> anyhow::Result<()> {
     use clap_complete::Shell;
 
     let shell = shell.unwrap_or_else(detect_shell);
 
     match shell {
-        Shell::Bash => print!("{}", SHELL_INIT_BASH),
-        Shell::Zsh => print!("{}", SHELL_INIT_ZSH),
-        Shell::Fish => print!("{}", SHELL_INIT_FISH),
+        Shell::Bash => {
+            print!("{}", SHELL_INIT_BASH);
+            if autocomplete {
+                print!("{}", AUTOCOMPLETE_BASH);
+            }
+        }
+        Shell::Zsh => {
+            print!("{}", SHELL_INIT_ZSH);
+            if autocomplete {
+                print!("{}", AUTOCOMPLETE_ZSH);
+            }
+        }
+        Shell::Fish => {
+            print!("{}", SHELL_INIT_FISH);
+            if autocomplete {
+                print!("{}", AUTOCOMPLETE_FISH);
+            }
+        }
         _ => anyhow::bail!("Unsupported shell. Use bash, zsh, or fish."),
     }
 
+    Ok(())
+}
+
+fn cmd_list_profiles() -> anyhow::Result<()> {
+    for p in get_stored_profiles()? {
+        println!("{p}");
+    }
+    Ok(())
+}
+
+fn cmd_list_vars() -> anyhow::Result<()> {
+    let path = Config::current_path()?;
+    let cfg = Config::load(&path)?;
+    for key in cfg.vars.keys() {
+        println!("{key}");
+    }
     Ok(())
 }
 
@@ -400,6 +433,100 @@ end
 
 # Initial load
 eval (command penv init | string replace -a 'export ' 'set -gx ' | string replace -a '=' ' ')
+"#;
+
+const AUTOCOMPLETE_BASH: &str = r#"
+# penv tab completion
+_penv_complete() {
+    local cur prev
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+    local commands="init shell-init discover set unset print list clean store load drop completions"
+    case "$prev" in
+        penv)
+            COMPREPLY=( $(compgen -W "$commands" -- "$cur") )
+            ;;
+        load|drop|print|store)
+            COMPREPLY=( $(compgen -W "$(command penv _list-profiles 2>/dev/null)" -- "$cur") )
+            ;;
+        set|unset)
+            COMPREPLY=( $(compgen -W "$(command penv _list-vars 2>/dev/null)" -- "$cur") )
+            ;;
+        completions|shell-init)
+            COMPREPLY=( $(compgen -W "bash zsh fish elvish powershell" -- "$cur") )
+            ;;
+    esac
+}
+complete -F _penv_complete penv
+"#;
+
+const AUTOCOMPLETE_ZSH: &str = r#"
+# penv tab completion
+_penv_complete() {
+    local state
+    _arguments \
+        '1: :->cmd' \
+        '*: :->arg'
+    case $state in
+        cmd)
+            local -a cmds
+            cmds=(
+                'init:Output export commands for eval'
+                'shell-init:Output shell wrapper with auto-reload'
+                'discover:Auto-detect network info'
+                'set:Add or update a variable'
+                'unset:Remove a variable'
+                'print:Print active variables or a profile'
+                'list:List all saved profiles'
+                'clean:Wipe current.yaml'
+                'store:Save current state as a profile'
+                'load:Load a profile'
+                'drop:Delete a saved profile'
+                'completions:Generate shell completions'
+            )
+            _describe 'command' cmds
+            ;;
+        arg)
+            case ${words[2]} in
+                load|drop|print|store)
+                    local -a profiles
+                    profiles=(${(f)"$(command penv _list-profiles 2>/dev/null)"})
+                    _describe 'profile' profiles
+                    ;;
+                set|unset)
+                    local -a vars
+                    vars=(${(f)"$(command penv _list-vars 2>/dev/null)"})
+                    _describe 'variable' vars
+                    ;;
+                completions|shell-init)
+                    _values 'shell' bash zsh fish elvish powershell
+                    ;;
+            esac
+            ;;
+    esac
+}
+compdef _penv_complete penv
+"#;
+
+const AUTOCOMPLETE_FISH: &str = r#"
+# penv tab completion
+set -l __penv_subcmds init shell-init discover set unset print list clean store load drop completions
+complete -c penv -f
+complete -c penv -n "not __fish_seen_subcommand_from $__penv_subcmds" -a init       -d 'Output export commands for eval'
+complete -c penv -n "not __fish_seen_subcommand_from $__penv_subcmds" -a shell-init -d 'Output shell wrapper with auto-reload'
+complete -c penv -n "not __fish_seen_subcommand_from $__penv_subcmds" -a discover   -d 'Auto-detect network info'
+complete -c penv -n "not __fish_seen_subcommand_from $__penv_subcmds" -a set        -d 'Add or update a variable'
+complete -c penv -n "not __fish_seen_subcommand_from $__penv_subcmds" -a unset      -d 'Remove a variable'
+complete -c penv -n "not __fish_seen_subcommand_from $__penv_subcmds" -a print      -d 'Print active variables or a profile'
+complete -c penv -n "not __fish_seen_subcommand_from $__penv_subcmds" -a list       -d 'List all saved profiles'
+complete -c penv -n "not __fish_seen_subcommand_from $__penv_subcmds" -a clean      -d 'Wipe current.yaml'
+complete -c penv -n "not __fish_seen_subcommand_from $__penv_subcmds" -a store      -d 'Save current state as a profile'
+complete -c penv -n "not __fish_seen_subcommand_from $__penv_subcmds" -a load       -d 'Load a profile'
+complete -c penv -n "not __fish_seen_subcommand_from $__penv_subcmds" -a drop       -d 'Delete a saved profile'
+complete -c penv -n "not __fish_seen_subcommand_from $__penv_subcmds" -a completions -d 'Generate shell completions'
+complete -c penv -n '__fish_seen_subcommand_from load drop print store' -a '(command penv _list-profiles 2>/dev/null)'
+complete -c penv -n '__fish_seen_subcommand_from set unset'             -a '(command penv _list-vars 2>/dev/null)'
+complete -c penv -n '__fish_seen_subcommand_from completions shell-init' -a 'bash zsh fish elvish powershell'
 "#;
 
 // ---------------------------------------------------------------------------

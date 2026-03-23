@@ -83,7 +83,18 @@ pub enum Commands {
         /// Shell type (bash, zsh, fish). Auto-detected if omitted.
         #[arg(value_enum)]
         shell: Option<Shell>,
+        /// Also install tab completion for commands and profile/variable names
+        #[arg(long)]
+        autocomplete: bool,
     },
+
+    /// [internal] Print profile names one per line (used by completion scripts)
+    #[command(name = "_list-profiles", hide = true)]
+    ListProfiles,
+
+    /// [internal] Print current variable names one per line (used by completion scripts)
+    #[command(name = "_list-vars", hide = true)]
+    ListVars,
 }
 
 pub fn print_completions(shell: Shell) {

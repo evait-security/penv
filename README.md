@@ -49,6 +49,24 @@ For fish shell:
 eval (penv shell-init fish)
 ```
 
+### Tab completion
+
+To also enable tab completion for commands, profile names, and variable names, pass `--autocomplete`:
+
+```bash
+# Bash / Zsh
+eval "$(penv shell-init --autocomplete)"
+
+# Fish
+eval (penv shell-init fish --autocomplete)
+```
+
+Completions are dynamic and include:
+- All `penv` subcommands
+- Saved profile names for `load`, `drop`, `print`, `store`
+- Current variable names for `set` and `unset`
+- Shell names for `completions` and `shell-init`
+
 **Manual mode**: If you prefer explicit control, use `eval "$(penv init)"` instead. You'll need to re-run it after each change.
 
 ## Usage
@@ -130,7 +148,7 @@ penv completions fish > ~/.config/fish/completions/penv.fish
 | Command | Description |
 |---------|-------------|
 | `penv init` | Output export commands for eval |
-| `penv shell-init [shell]` | Output shell wrapper with auto-reload (bash/zsh/fish) |
+| `penv shell-init [--autocomplete] [shell]` | Output shell wrapper with auto-reload; `--autocomplete` also installs tab completion |
 | `penv discover` | Auto-detect network info and save to current.yaml |
 | `penv set <key> <value>` | Add or update a variable |
 | `penv unset <key>` | Remove a variable |
