@@ -23,10 +23,12 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Discover { dry_run, json } => cmd_discover(dry_run, json),
         Commands::Set { key, value } => cmd_set(&key, &value),
         Commands::Unset { key } => cmd_unset(&key),
+        Commands::Print { profile_name } => cmd_print(profile_name.as_deref()),
         Commands::List => cmd_list(),
         Commands::Clean => cmd_clean(),
         Commands::Store { profile_name } => cmd_store(&profile_name),
         Commands::Load { profile_name } => cmd_load(&profile_name),
+        Commands::Drop { profile_name } => cmd_drop(&profile_name),
         Commands::Completions { shell } => {
             cli::print_completions(shell);
             Ok(())
@@ -190,19 +192,51 @@ fn cmd_unset(key: &str) -> anyhow::Result<()> {
 }
 
 // ---------------------------------------------------------------------------
-// penv list
+// penv print
 // ---------------------------------------------------------------------------
 
-fn cmd_list() -> anyhow::Result<()> {
-    let path = Config::current_path()?;
+fn cmd_print(profile_name: Option<&str>) -> anyhow::Result<()> {
+    let (path, exact_profile_name) = match profile_name {
+        Some(name) => {
+            // Validate profile name and get exact name from stored profiles list
+            validate_profile_name(name)?;
+            let exact_name = find_exact_profile_name(name)?;
+            let path = Config::profile_path(&exact_name)?;
+            (path, Some(exact_name))
+        },
+        None => (Config::current_path()?, None),
+    };
+
     let cfg = Config::load(&path)?;
     if cfg.vars.is_empty() {
-        println!("No variables set. Run `penv discover` or `penv set <key> <value>`.");
+        if let Some(exact_name) = exact_profile_name {
+            println!("Profile '{}' has no variables set.", exact_name);
+        } else {
+            println!("No variables set. Run `penv discover` or `penv set <key> <value>`.");
+        }
         return Ok(());
     }
     let max_key_len = cfg.vars.keys().map(|k| k.len()).max().unwrap_or(0);
     for (key, value) in &cfg.vars {
         println!("{key:<max_key_len$} = {value}");
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// penv list
+// ---------------------------------------------------------------------------
+
+fn cmd_list() -> anyhow::Result<()> {
+    let profiles = get_stored_profiles()?;
+    if profiles.is_empty() {
+        println!("No saved profiles found. Use `penv store <name>` to save the current configuration.");
+        return Ok(());
+    }
+    
+    println!("Saved profiles:");
+    for profile in profiles {
+        println!("  {}", profile);
     }
     Ok(())
 }
@@ -242,16 +276,37 @@ fn cmd_store(profile_name: &str) -> anyhow::Result<()> {
 
 fn cmd_load(profile_name: &str) -> anyhow::Result<()> {
     validate_profile_name(profile_name)?;
-    let src = Config::profile_path(profile_name)?;
+    let exact_name = find_exact_profile_name(profile_name)?;
+    let src = Config::profile_path(&exact_name)?;
     if !src.exists() {
-        anyhow::bail!("Profile '{profile_name}' not found at {}", src.display());
+        anyhow::bail!("Profile '{exact_name}' not found at {}", src.display());
     }
     let dst = Config::current_path()?;
     if let Some(parent) = dst.parent() {
         fs::create_dir_all(parent)?;
     }
     fs::copy(&src, &dst)?;
-    println!("Profile '{profile_name}' loaded.");
+    println!("Profile '{exact_name}' loaded.");
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// penv drop
+// ---------------------------------------------------------------------------
+
+fn cmd_drop(profile_name: &str) -> anyhow::Result<()> {
+    validate_profile_name(profile_name)?;
+    
+    // Get exact profile name from stored profiles list (security: never trust user input)
+    let exact_name = find_exact_profile_name(profile_name)?;
+    
+    let path = Config::profile_path(&exact_name)?;
+    if path.exists() {
+        fs::remove_file(&path)?;
+        println!("Profile '{exact_name}' deleted.");
+    } else {
+        anyhow::bail!("Profile '{exact_name}' file does not exist at {}", path.display());
+    }
     Ok(())
 }
 
@@ -366,6 +421,64 @@ fn validate_profile_name(name: &str) -> anyhow::Result<()> {
         );
     }
     Ok(())
+}
+
+/// Find exact profile name from stored profiles list, matching case-insensitive.
+/// Returns the exact name as stored in the filesystem to prevent trusting user input.
+fn find_exact_profile_name(user_input: &str) -> anyhow::Result<String> {
+    let stored_profiles = get_stored_profiles()?;
+    
+    // Find exact match (case-sensitive)
+    if stored_profiles.contains(&user_input.to_string()) {
+        return Ok(user_input.to_string());
+    }
+    
+    // Find case-insensitive match
+    let user_lower = user_input.to_lowercase();
+    for profile in &stored_profiles {
+        if profile.to_lowercase() == user_lower {
+            return Ok(profile.clone());
+        }
+    }
+    
+    // No match found
+    if stored_profiles.is_empty() {
+        anyhow::bail!("No profiles saved yet. Use `penv store <name>` to save a profile.");
+    } else {
+        anyhow::bail!("Profile not found. Available profiles: {}", stored_profiles.join(", "));
+    }
+}
+
+/// Get a list of all stored profile names (excluding current.yaml).
+fn get_stored_profiles() -> anyhow::Result<Vec<String>> {
+    let home = dirs::home_dir()
+        .ok_or_else(|| anyhow::anyhow!("Cannot determine home directory"))?;
+    let penv_dir = home.join(".local").join("share").join("penv");
+    
+    if !penv_dir.exists() {
+        return Ok(vec![]);
+    }
+    
+    let mut profiles = Vec::new();
+    let entries = fs::read_dir(&penv_dir)?;
+    
+    for entry in entries {
+        let entry = entry?;
+        let path = entry.path();
+        
+        if path.is_file() {
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                // Include all .yaml files except current.yaml
+                if name.ends_with(".yaml") && name != "current.yaml" {
+                    let profile_name = name.strip_suffix(".yaml").unwrap().to_string();
+                    profiles.push(profile_name);
+                }
+            }
+        }
+    }
+    
+    profiles.sort();
+    Ok(profiles)
 }
 
 // ---------------------------------------------------------------------------

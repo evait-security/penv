@@ -41,7 +41,13 @@ pub enum Commands {
         key: String,
     },
 
-    /// Print all currently active variables
+    /// Print currently active variables or a specific profile
+    Print {
+        /// Optional profile name to print (if omitted, prints current.yaml)
+        profile_name: Option<String>,
+    },
+
+    /// List all saved profiles
     List,
 
     /// Wipe current.yaml (no confirmation)
@@ -56,6 +62,12 @@ pub enum Commands {
     /// Load a named profile into current.yaml
     Load {
         /// Profile name to load
+        profile_name: String,
+    },
+
+    /// Delete a saved profile (only profiles that were created with 'store')
+    Drop {
+        /// Profile name to delete
         profile_name: String,
     },
 
