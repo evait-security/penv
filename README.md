@@ -14,6 +14,18 @@ nxc smb $dc -d $domain -u $user -p $password
 
 ## Installation
 
+### Pre-built binary (recommended)
+
+Download the latest pre-built binary directly from the [releases page](https://github.com/evait-security/penv/releases/latest):
+
+```bash
+mkdir -p ~/.local/bin
+curl -L https://github.com/evait-security/penv/releases/download/latest/penv-linux-x86_64 -o ~/.local/bin/penv
+chmod +x ~/.local/bin/penv
+```
+
+### Build from source
+
 ```bash
 cargo build --release
 cp target/release/penv ~/.local/bin/
