@@ -59,7 +59,7 @@ Detects and saves:
 penv set user "USERNAME"
 penv set password "P@ssw0rd!"
 penv unset password
-penv list
+penv print
 ```
 
 ### Profile management
@@ -70,10 +70,28 @@ Save the current configuration as a named profile:
 penv store customer_1
 ```
 
+List all saved profiles:
+
+```bash
+penv list
+```
+
 Load a saved profile:
 
 ```bash
 penv load customer_1
+```
+
+Print a specific profile without loading it:
+
+```bash
+penv print customer_1
+```
+
+Delete a saved profile:
+
+```bash
+penv drop customer_1
 ```
 
 With `shell-init`, variables are reloaded automatically.
@@ -104,10 +122,12 @@ penv completions fish > ~/.config/fish/completions/penv.fish
 | `penv discover` | Auto-detect network info and save to current.yaml |
 | `penv set <key> <value>` | Add or update a variable |
 | `penv unset <key>` | Remove a variable |
-| `penv list` | Print all active variables |
+| `penv print [profile]` | Print active variables or a specific profile |
+| `penv list` | List all saved profiles |
 | `penv clean` | Wipe current.yaml |
 | `penv store <name>` | Save current state as a profile |
 | `penv load <name>` | Load a profile into current.yaml |
+| `penv drop <name>` | Delete a saved profile |
 | `penv completions <shell>` | Generate shell completions |
 
 ## Configuration Files

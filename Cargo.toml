@@ -1,6 +1,6 @@
 [package]
 name = "penv"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Pentester Environment - manage network and customer-specific environment variables across shell sessions"
 license = "MIT"
