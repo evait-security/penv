@@ -23,7 +23,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Discover { dry_run, json } => cmd_discover(dry_run, json),
         Commands::Set { key, value } => cmd_set(&key, &value),
         Commands::Unset { key } => cmd_unset(&key),
-        Commands::Print { profile_name } => cmd_print(profile_name.as_deref()),
+        Commands::Print { profile_name, json } => cmd_print(profile_name.as_deref(), json),
         Commands::List => cmd_list(),
         Commands::Clean => cmd_clean(),
         Commands::Store { profile_name } => cmd_store(&profile_name),
@@ -197,7 +197,7 @@ fn cmd_unset(key: &str) -> anyhow::Result<()> {
 // penv print
 // ---------------------------------------------------------------------------
 
-fn cmd_print(profile_name: Option<&str>) -> anyhow::Result<()> {
+fn cmd_print(profile_name: Option<&str>, json: bool) -> anyhow::Result<()> {
     let (path, exact_profile_name) = match profile_name {
         Some(name) => {
             // Validate profile name and get exact name from stored profiles list
@@ -211,11 +211,17 @@ fn cmd_print(profile_name: Option<&str>) -> anyhow::Result<()> {
 
     let cfg = Config::load(&path)?;
     if cfg.vars.is_empty() {
-        if let Some(exact_name) = exact_profile_name {
+        if json {
+            println!("{{}}");
+        } else if let Some(exact_name) = exact_profile_name {
             println!("Profile '{}' has no variables set.", exact_name);
         } else {
             println!("No variables set. Run `penv discover` or `penv set <key> <value>`.");
         }
+        return Ok(());
+    }
+    if json {
+        println!("{}", serde_json::to_string(&cfg.vars)?);
         return Ok(());
     }
     let max_key_len = cfg.vars.keys().map(|k| k.len()).max().unwrap_or(0);

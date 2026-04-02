@@ -45,6 +45,9 @@ pub enum Commands {
     Print {
         /// Optional profile name to print (if omitted, prints current.yaml)
         profile_name: Option<String>,
+        /// Output variables as JSON
+        #[arg(long)]
+        json: bool,
     },
 
     /// List all saved profiles
